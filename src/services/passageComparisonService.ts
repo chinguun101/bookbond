@@ -2,6 +2,7 @@ import { Passage } from '@/lib/textProcessing';
 import { LLMService } from './llmService';
 import { embeddingService } from './embeddingService';
 import { useBookStore } from '@/store/bookStore';
+import { TimeoutController } from '@/utils/timeoutController';
 
 /**
  * Types for passage comparisons
@@ -17,7 +18,10 @@ export interface PassageRelation {
 }
 
 // Default threshold for similarity
-const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
+const DEFAULT_SIMILARITY_THRESHOLD = 0.50;
+
+// Define type for the LLM response callback
+type LLMResponseCallback = (prompt: string) => Promise<string>;
 
 /**
  * Service for comparing passages between books
@@ -25,6 +29,7 @@ const DEFAULT_SIMILARITY_THRESHOLD = 0.75;
 export class PassageComparisonService {
   private llmService: LLMService;
   private similarityThreshold: number;
+  private llamaApiKey: string = '';
   
   constructor(similarityThreshold = DEFAULT_SIMILARITY_THRESHOLD) {
     this.llmService = new LLMService();
@@ -43,6 +48,8 @@ export class PassageComparisonService {
    */
   setApiKey(llamaApiKey: string, openaiApiKey?: string) {
     this.llmService.setApiKey(llamaApiKey);
+    this.llamaApiKey = llamaApiKey;
+    
     // If OpenAI API key is provided, set it for the embedding service
     if (openaiApiKey) {
       embeddingService.setApiKey(openaiApiKey);
@@ -161,53 +168,125 @@ export class PassageComparisonService {
     // Get all passages from source book
     const sourcePassages = bookStore.getPassages(sourceBookId);
     
-    // Create batches of passages to process
-    const batches: Passage[][] = [];
-    for (let i = 0; i < sourcePassages.length; i += batchSize) {
-      batches.push(sourcePassages.slice(i, i + batchSize));
-    }
-    
     // Map to store all relations by passage ID
     const allRelations = new Map<string, PassageRelation[]>();
     
-    // Process each batch
-    for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
-      const batchProgress = i / batches.length;
-      const progressStart = 15 + batchProgress * 85;
-      progressCallback?.(
-        progressStart, 
-        `Processing batch ${i+1}/${batches.length} (${batch.length} passages)`
-      );
+    // Process all passages at once instead of in batches
+    progressCallback?.(20, `Finding similar passages for all ${sourcePassages.length} passages at once`);
+    
+    // Find similar passages for all source passages at once using embeddings
+    const allSimilarPassages = await Promise.all(
+      sourcePassages.map(async (passage) => {
+        try {
+          // Find similar passages using embeddings
+          const similarPassages = await embeddingService.findSimilarPassages(
+            passage,
+            targetBookId,
+            topK
+          );
+          
+          // Filter by similarity threshold
+          const thresholdPassages = similarPassages.filter(p => p.similarity >= this.similarityThreshold);
+          
+          return {
+            passageId: passage.id,
+            passage: passage,
+            similarPassages: thresholdPassages,
+          };
+        } catch (error) {
+          console.error(`Error finding similar passages for ${passage.id}:`, error);
+          return {
+            passageId: passage.id,
+            passage: passage,
+            similarPassages: [],
+          };
+        }
+      })
+    );
+    
+    progressCallback?.(60, `Found similar passages, now analyzing relationships`);
+    
+    // Filter out passages with no similar passages
+    const passagesWithSimilarities = allSimilarPassages.filter(
+      result => result.similarPassages.length > 0
+    );
+    
+    if (passagesWithSimilarities.length === 0) {
+      progressCallback?.(100, `No similar passages found above threshold`);
+      return allRelations;
+    }
+    
+    // For each passage with similar passages, analyze the relationships
+    for (const result of passagesWithSimilarities) {
+      const { passageId, passage, similarPassages } = result;
       
-      // Process passages in batch concurrently
-      const results = await Promise.all(
-        batch.map(async (passage) => {
-          try {
-            const relations = await this.compareWithBook(passage, targetBookId, topK);
-            return { passageId: passage.id, relations };
-          } catch (error) {
-            console.error(`Error comparing passage ${passage.id}:`, error);
-            return { passageId: passage.id, relations: [] };
-          }
-        })
-      );
-      
-      // Store results from this batch
-      results.forEach(({ passageId, relations }) => {
-        allRelations.set(passageId, relations);
+      // Fill in the passage texts
+      const passagesWithText = similarPassages.map(similar => {
+        const relatedPassage = bookStore.getPassages(targetBookId)
+          .find(p => p.id === similar.passage.id);
+        
+        if (!relatedPassage) {
+          throw new Error(`Passage ${similar.passage.id} not found in book ${targetBookId}`);
+        }
+        
+        return {
+          passage: relatedPassage,
+          similarity: similar.similarity
+        };
       });
       
-      const progressEnd = 15 + ((i + 1) / batches.length) * 85;
-      progressCallback?.(
-        progressEnd, 
-        `Completed batch ${i+1}/${batches.length}`
+      // Generate the prompt for the LLM to analyze relationships
+      const relations = await this.analyzeRelationships(
+        passage,
+        passagesWithText.map(p => p.passage),
+        passagesWithText.map(p => p.similarity)
       );
+      
+      allRelations.set(passageId, relations);
     }
     
     progressCallback?.(100, `Comparison complete`);
     
     return allRelations;
+  }
+  
+  /**
+   * Direct call to LLama API for relationship analysis
+   */
+  private async callLlamaDirectly(prompt: string): Promise<string> {
+    try {
+      console.log('Making direct Llama API call for relationship analysis');
+      
+      const response = await fetch('https://api.llama.com/compat/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.llamaApiKey}`
+        },
+        body: JSON.stringify({
+          model: 'Llama-4-Maverick-17B-128E-Instruct-FP8',
+          messages: [
+            { role: 'system', content: 'You are an expert in textual analysis. Return valid JSON only.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.1,
+          max_tokens: 4000,
+          stream: false,
+          top_p: 0.95
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP error: ${response.status} ${response.statusText}. Details: ${errorText}`);
+      }
+      
+      const data = await response.json();
+      return data.choices[0]?.message?.content || '';
+    } catch (error) {
+      console.error('Error calling Llama API directly:', error);
+      throw error;
+    }
   }
   
   /**
@@ -222,8 +301,8 @@ export class PassageComparisonService {
     const prompt = this.createRelationshipPrompt(focusPassage, candidatePassages);
     
     try {
-      // Get response from LLM
-      const rawResponse = await this.llmService.getCustomLLMResponse(prompt);
+      // Call Llama directly
+      const rawResponse = await this.callLlamaDirectly(prompt);
       
       // Parse the response
       const relations = this.parseRelationsFromResponse(
@@ -249,24 +328,38 @@ export class PassageComparisonService {
   ): string {
     const relationTypes: RelationType[] = ['supports', 'contradicts', 'extends', 'analogous'];
     
-    // Format the JSON input for the LLM
-    const inputJson = {
-      focus_passage: focusPassage.text,
-      candidate_passages: candidatePassages.map(p => p.text),
-      relation_types: relationTypes,
-      passage_ids: candidatePassages.map(p => p.id)
-    };
-    
-    return `You are an expert in textual analysis and identifying relationships between passages.
-    
-System: Return valid JSON only, no markdown formatting, no explanations outside the JSON.
+    // Format the JSON input for the LLM, but avoid stringifying the full passages
+    // to keep the prompt more concise and focused
+    return `You are an expert in analyzing relationships between text passages. Analyze the following focus passage and its relationship to candidate passages.
 
-User: ${JSON.stringify(inputJson, null, 2)}
+FOCUS PASSAGE:
+"""
+${focusPassage.text}
+"""
 
-The output must be a valid JSON array where each object has:
-- passage_id: The ID of the candidate passage
-- relation: One of the relation types from the input
-- evidence: Brief explanation (1-2 sentences) of why this relation was chosen
+CANDIDATE PASSAGES:
+${candidatePassages.map((p, i) => `
+PASSAGE #${i+1} [ID: ${p.id}]:
+"""
+${p.text}
+"""
+`).join('\n')}
+
+TASK:
+For each candidate passage, determine its relationship to the focus passage. The relationship must be one of: supports, contradicts, extends, analogous.
+
+- supports: The candidate passage provides evidence or arguments that strengthen the focus passage's claims
+- contradicts: The candidate passage presents claims, facts, or views that oppose those in the focus passage
+- extends: The candidate passage builds upon, elaborates, or provides additional context for the focus passage
+- analogous: The candidate passage presents similar ideas in a different context or domain
+
+OUTPUT FORMAT:
+Return a JSON array where each object contains:
+1. "passage_id": The ID of the candidate passage
+2. "relation": The relationship type (supports, contradicts, extends, analogous)
+3. "evidence": A brief explanation (1-2 sentences) justifying why this relationship was chosen
+
+IMPORTANT: Return ONLY valid JSON with no markdown formatting, no explanations outside the JSON. Each candidate passage must have one entry in the results.
 
 Example output format:
 [
@@ -277,7 +370,7 @@ Example output format:
   },
   {
     "passage_id": "${candidatePassages[1]?.id || 'example-id-2'}",
-    "relation": "contradicts",
+    "relation": "contradicts", 
     "evidence": "While the focus passage states X, this passage claims Y instead."
   }
 ]`;
@@ -302,8 +395,15 @@ Example output format:
         // Extract the content inside the code blocks
         jsonResponse = JSON.parse(markdownMatch[1]);
       } else {
-        // Try to parse the raw response
-        jsonResponse = JSON.parse(response);
+        // Try to clean up the response before parsing
+        // Remove any extra text before the first '[' and after the last ']'
+        const jsonMatch = response.match(/(\[[\s\S]*\])/);
+        if (jsonMatch) {
+          jsonResponse = JSON.parse(jsonMatch[1]);
+        } else {
+          // Try to parse the raw response
+          jsonResponse = JSON.parse(response);
+        }
       }
       
       // Ensure it's an array
@@ -312,22 +412,29 @@ Example output format:
       }
       
       // Map to our internal structure
-      return jsonResponse.map((item: any, index: number) => {
+      return jsonResponse.map((item: any) => {
         const passageId = item.passage_id;
         const passage = candidatePassages.find(p => p.id === passageId);
         
         if (!passage) {
-          throw new Error(`Passage ${passageId} not found in candidates`);
+          console.warn(`Passage ${passageId} not found in candidates, skipping`);
+          return null;
         }
+        
+        // Find the similarity score for this passage
+        const passageIndex = candidatePassages.findIndex(p => p.id === passageId);
+        const similarity = passageIndex >= 0 && passageIndex < similarities.length 
+          ? similarities[passageIndex] 
+          : 0;
         
         return {
           focusPassageId,
           relatedPassageId: passageId,
           relationType: item.relation as RelationType,
           evidence: item.evidence,
-          similarity: similarities[index] || 0
+          similarity
         };
-      });
+      }).filter(Boolean) as PassageRelation[]; // Filter out null values
     } catch (error) {
       console.error('Error parsing relations from response:', error);
       console.error('Raw response:', response);
@@ -337,46 +444,6 @@ Example output format:
     }
   }
 }
-
-// Extend the LLMService with a custom response method
-declare module './llmService' {
-  interface LLMService {
-    getCustomLLMResponse(prompt: string): Promise<string>;
-  }
-}
-
-// Add custom method to LLMService
-LLMService.prototype.getCustomLLMResponse = async function(prompt: string): Promise<string> {
-  try {
-    // Send request to LLM
-    const response = await fetch(this.config.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: [
-          { role: 'system', content: 'You are an expert in textual analysis. Return JSON only.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 2000
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    return data.choices[0]?.message?.content || '';
-  } catch (error) {
-    console.error('Error getting custom LLM response:', error);
-    throw error;
-  }
-};
 
 // Singleton instance
 export const passageComparisonService = new PassageComparisonService(); 

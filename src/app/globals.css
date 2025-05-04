@@ -2,25 +2,98 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1f2937;
+  --muted-foreground: #6b7280;
+  --border: #e5e7eb;
+  --card-background: #ffffff;
+  --amber-background: #fffbeb;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-card: var(--card-background);
+  --color-amber-bg: var(--amber-background);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Georgia', serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #111827;
+    --foreground: #f9fafb;
+    --muted-foreground: #d1d5db;
+    --border: #374151;
+    --card-background: #1f2937;
+    --amber-background: #78350f;
+    --primary: #3b82f6;
+    --primary-hover: #60a5fa;
   }
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom class for readable text container */
+.readable-container {
+  max-width: 70ch;
+  margin: 0 auto;
+}
+
+/* Ensure all buttons have clear text contrast */
+button, 
+a[role="button"],
+.btn {
+  color: var(--foreground);
+  transition: all 0.2s ease;
+}
+
+/* Ensure text in amber background has proper contrast */
+.bg-amber-50 {
+  color: #713f12; /* amber-900 - always dark enough for amber bg */
+}
+
+/* Fix text color in dropdowns and selectors */
+.text-black {
+  color: #111827 !important;
+}
+
+/* Add scrolling styles */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }

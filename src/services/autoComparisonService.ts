@@ -132,13 +132,13 @@ class AutoComparisonService {
           this.updateComparisonProgress(comparisonKey, progress, message, 'running');
         };
         
-        // Compare all passages between the two books
+        // Compare all passages between the two books at once
         // Using topK=2 to limit the number of relationships
         const results = await passageComparisonService.compareAllPassages(
           newBook.id,
           existingBook.id,
           2, // topK - reduced from 3 to 2 to limit relationships
-          5, // batchSize
+          undefined, // batchSize is no longer used
           progressCallback
         );
         
@@ -161,7 +161,7 @@ class AutoComparisonService {
           existingBook.id,
           newBook.id,
           2, // topK - reduced from 3 to 2 to limit relationships
-          5, // batchSize
+          undefined, // batchSize is no longer used
           (progress, message) => {
             this.updateComparisonProgress(reverseComparisonKey, progress, message, 'running');
           }
