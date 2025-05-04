@@ -186,21 +186,25 @@ export default function BookReader({ bookId: initialBookId }: { bookId: string }
         {showBookSelector && (
           <div className="absolute top-full left-0 mt-2 w-72 bg-white shadow-xl rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
             <div className="p-3 border-b border-gray-100">
-              <h3 className="text-sm font-medium text-gray-700">Available Books</h3>
+              <h3 className="text-sm font-medium text-gray-800">Available Books</h3>
             </div>
             <div className="p-2">
               {books.length === 0 ? (
-                <p className="text-sm text-gray-500 p-2">No books available</p>
+                <p className="text-sm text-gray-600 p-2">No books available</p>
               ) : (
                 <div className="space-y-1">
                   {books.map(b => (
                     <button
                       key={b.id}
                       onClick={() => handleBookChange(b.id)}
-                      className={`w-full text-left px-4 py-3 text-sm rounded-md transition-colors duration-200 ${b.id === bookId ? 'bg-blue-50 text-blue-700 font-medium' : 'hover:bg-gray-50 text-gray-700'}`}
+                      className={`w-full text-left px-4 py-3 text-sm rounded-md transition-colors duration-200 ${
+                        b.id === bookId 
+                          ? 'bg-blue-50 text-blue-700 font-medium' 
+                          : 'hover:bg-gray-50'
+                      }`}
                     >
                       <div className="font-medium truncate text-gray-800">{b.title}</div>
-                      <div className="text-xs text-gray-500 mt-1">{b.passages.length} passages</div>
+                      <div className="text-xs text-gray-600 mt-1">{b.passages.length} passages</div>
                     </button>
                   ))}
                 </div>
