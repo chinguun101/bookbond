@@ -290,4 +290,97 @@ export class LLMService {
     // Placeholder for future implementation
     return [];
   }
+
+  /**
+   * Chat with the book about the current passage
+   */
+  async chatWithBook(
+    prompt: string, 
+    currentPassage: Passage,
+    bookContent: string, 
+    chatHistory: {role: string, content: string}[] = []
+  ): Promise<string> {
+    try {
+      const systemPrompt = `
+You are an expert literary companion AI that engages in thoughtful discussion about books.
+Your purpose is to help readers understand and appreciate the text they're reading.
+
+You have access to:
+1. The full book text
+2. The specific passage the reader is currently reading
+3. Previous chat history with this reader
+
+When answering questions:
+- Be concise but insightful
+- Provide textual evidence from the book when relevant
+- Avoid unnecessarily long explanations
+- Focus on helping the reader understand the text more deeply
+- Consider both the immediate passage and broader context from the full book
+
+Important: If asked about something not in the book, politely indicate this limitation.
+Do not fabricate details that aren't present in the text.`;
+
+      // Format the message for the LLM
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `
+FULL BOOK CONTENT:
+${bookContent.slice(0, 25000)}... [book content truncated for space]
+
+CURRENT PASSAGE:
+${currentPassage.text}
+
+QUESTION:
+${prompt}` }
+      ];
+
+      // Add chat history if provided
+      if (chatHistory.length > 0) {
+        // Insert chat history before the current question
+        messages.splice(1, 0, ...chatHistory);
+      }
+
+      // Setup timeout controller
+      const timeoutController = new AbortController();
+      const timeoutId = window.setTimeout(() => {
+        timeoutController.abort();
+      }, this.config.timeoutMs || 180000);
+      
+      try {
+        const response = await fetch(this.config.endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.config.apiKey}`
+          },
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: messages,
+            temperature: 0.7, // Slightly higher temperature for more engaging responses
+            max_tokens: 1000, // Limit response length
+            stream: false
+          }),
+          signal: timeoutController.signal
+        });
+        
+        // Clear the timeout
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        return data.choices[0]?.message?.content || 'I apologize, but I couldn\'t generate a response.';
+      } catch (error: any) {
+        if (error.name === 'AbortError') {
+          return 'The request timed out. Please try again with a shorter query.';
+        }
+        throw error;
+      }
+    } catch (error: any) {
+      console.error('Error in chatWithBook:', error);
+      return 'I apologize, but there was an error processing your question.';
+    }
+  }
 } 

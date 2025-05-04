@@ -88,10 +88,8 @@ export default function Home() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-12 sm:px-6 lg:px-8">
       <header className="mb-12 flex flex-col items-center">
-        <h1 className="text-4xl font-bold text-center text-gray-800">AI Reading Companion</h1>
-        <p className="text-gray-600 text-center mt-3 mb-6 max-w-2xl">
-          Upload books, analyze passages, and discover connections between different texts
-        </p>
+        <h1 className="text-4xl font-bold text-center text-white-800">Book Bond</h1>
+
         
         <a 
           href="/reader" 
